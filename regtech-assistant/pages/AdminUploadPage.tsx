@@ -3,11 +3,18 @@ import { UploadCloud, File, X, CheckCircle, AlertCircle } from 'lucide-react';
 import { Card, Button, Badge } from '../components/UI';
 import { motion, AnimatePresence } from 'framer-motion';
 
+interface UploadStatus {
+  fileName: string;
+  success: boolean;
+  error?: string;
+}
+
 export const AdminUploadPage: React.FC = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [uploadResults, setUploadResults] = useState<UploadStatus[]>([]);
+  const [showResults, setShowResults] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDrop = (e: React.DragEvent) => {
@@ -42,6 +49,55 @@ export const AdminUploadPage: React.FC = () => {
     fileInputRef.current?.click();
   };
 
+  const uploadSingleFile = async (file: File): Promise<UploadStatus> => {
+    try {
+      // Validate file size (50MB limit)
+      const maxSize = 50 * 1024 * 1024; // 50MB in bytes
+      if (file.size > maxSize) {
+        return {
+          fileName: file.name,
+          success: false,
+          error: 'File size exceeds 50MB limit'
+        };
+      }
+
+      // Create FormData for file upload
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', file.name.replace(/\.[^/.]+$/, '')); // filename without extension
+      formData.append('status', 'Draft');
+
+      // Get auth token (adjust based on your auth implementation)
+      const token = localStorage.getItem('authToken');
+
+      const response = await fetch('/api/documents/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Upload failed');
+      }
+
+      return {
+        fileName: file.name,
+        success: true
+      };
+
+    } catch (error) {
+      return {
+        fileName: file.name,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  };
+
   const handleUpload = async () => {
     if (files.length === 0) {
       alert('Please select files to upload');
@@ -49,21 +105,38 @@ export const AdminUploadPage: React.FC = () => {
     }
     
     setUploading(true);
+    setUploadResults([]);
+    setShowResults(false);
     
-    // Log files being uploaded
-    console.log('Uploading files:', files.map(f => ({ name: f.name, size: f.size })));
-    
-    // Simulate upload process
-    await new Promise(r => setTimeout(r, 2000));
-    
-    setUploading(false);
-    setSuccess(true);
-    
-    setTimeout(() => {
-      setSuccess(false);
-      setFiles([]);
-    }, 3000);
+    try {
+      // Upload all files in parallel
+      const results = await Promise.all(
+        files.map(file => uploadSingleFile(file))
+      );
+      
+      setUploadResults(results);
+      setShowResults(true);
+
+      // If all uploads succeeded, clear files after 3 seconds
+      const allSucceeded = results.every(r => r.success);
+      if (allSucceeded) {
+        setTimeout(() => {
+          setShowResults(false);
+          setFiles([]);
+          setUploadResults([]);
+        }, 3000);
+      }
+
+    } catch (error) {
+      console.error('Upload error:', error);
+      alert('Upload process failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
   };
+
+  const successCount = uploadResults.filter(r => r.success).length;
+  const failureCount = uploadResults.filter(r => !r.success).length;
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
@@ -79,6 +152,7 @@ export const AdminUploadPage: React.FC = () => {
         accept=".pdf,.docx,.xml,.doc"
         onChange={handleFileChange}
         style={{ display: 'none' }}
+        disabled={uploading}
       />
 
       <Card className={`h-64 border-2 border-dashed transition-all duration-200 flex flex-col items-center justify-center text-center ${isDragging ? 'border-reg-teal bg-reg-teal/5 scale-[1.02]' : 'border-slate-300'}`}>
@@ -87,7 +161,7 @@ export const AdminUploadPage: React.FC = () => {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onClick={handleBrowseClick}
-          className="w-full h-full flex flex-col items-center justify-center cursor-pointer"
+          className={`w-full h-full flex flex-col items-center justify-center ${uploading ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
         >
           <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
             <UploadCloud className={`w-8 h-8 transition-colors ${isDragging ? 'text-reg-teal' : 'text-slate-400'}`} />
@@ -119,20 +193,38 @@ export const AdminUploadPage: React.FC = () => {
                     <p className="text-xs text-slate-500">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                   </div>
                 </div>
-                <button onClick={() => setFiles(files.filter(f => f !== file))} className="text-slate-400 hover:text-red-500">
-                  <X size={18} />
-                </button>
+                {!uploading && (
+                  <button onClick={() => setFiles(files.filter(f => f !== file))} className="text-slate-400 hover:text-red-500">
+                    <X size={18} />
+                  </button>
+                )}
               </div>
             ))}
 
             <div className="flex justify-end pt-4">
-              {success ? (
-                <Badge variant="success" className="px-4 py-2 text-sm flex items-center gap-2">
-                  <CheckCircle size={16} /> Ingestion Started Successfully
-                </Badge>
+              {showResults ? (
+                <div className="w-full space-y-2">
+                  {successCount > 0 && (
+                    <Badge variant="success" className="px-4 py-2 text-sm flex items-center gap-2">
+                      <CheckCircle size={16} /> {successCount} file{successCount > 1 ? 's' : ''} uploaded successfully
+                    </Badge>
+                  )}
+                  {failureCount > 0 && (
+                    <div className="space-y-2">
+                      <Badge variant="error" className="px-4 py-2 text-sm flex items-center gap-2 bg-red-100 text-red-700">
+                        <AlertCircle size={16} /> {failureCount} file{failureCount > 1 ? 's' : ''} failed to upload
+                      </Badge>
+                      {uploadResults.filter(r => !r.success).map((result, i) => (
+                        <p key={i} className="text-xs text-red-600 pl-4">
+                          • {result.fileName}: {result.error}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
               ) : (
-                <Button onClick={handleUpload} isLoading={uploading} className="w-full sm:w-auto">
-                  Start Ingestion Pipeline
+                <Button onClick={handleUpload} isLoading={uploading} className="w-full sm:w-auto" disabled={uploading}>
+                  {uploading ? 'Uploading...' : 'Start Ingestion Pipeline'}
                 </Button>
               )}
             </div>
