@@ -14,6 +14,7 @@ const mockDocuments = [
 export const UserDocuments: React.FC = () => {
 const navigate = useNavigate();
 const [searchTerm, setSearchTerm] = useState('');
+const [isUploading, setIsUploading] = useState(false);
 const fileInputRef = useRef<HTMLInputElement>(null);
 
 const filteredDocs = mockDocuments.filter(doc =>
@@ -25,17 +26,63 @@ const handleUploadClick = () => {
 fileInputRef.current?.click();
 };
 
-const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
 const files = event.target.files;
 if (files && files.length > 0) {
 const file = files[0];
-console.log('File selected:', file.name);
-alert(`Document "${file.name}" uploaded successfully!\n\nSize: ${(file.size / 1024).toFixed(2)} KB\nType: ${file.type}`);
-// Here you would typically upload the file to your server
-// e.g., await uploadDocument(file);
+
+// Validate file size (50MB limit)
+const maxSize = 50 * 1024 * 1024; // 50MB in bytes
+if (file.size > maxSize) {
+alert('File size exceeds 50MB limit. Please upload a smaller file.');
+event.target.value = '';
+return;
 }
+
+setIsUploading(true);
+
+try {
+// Create FormData for file upload
+const formData = new FormData();
+formData.append('file', file);
+// Optional: Add metadata
+formData.append('title', file.name.replace(/\.[^/.]+$/, '')); // filename without extension
+formData.append('status', 'Draft');
+
+// Get auth token (adjust based on your auth implementation)
+const token = localStorage.getItem('authToken'); // or however you store your token
+
+const response = await fetch('/api/documents/upload', {
+method: 'POST',
+headers: {
+'Authorization': `Bearer ${token}`,
+// Don't set Content-Type - browser will set it with boundary for multipart/form-data
+},
+body: formData,
+});
+
+const result = await response.json();
+
+if (!response.ok) {
+throw new Error(result.error || 'Upload failed');
+}
+
+// Success
+alert(`Document "${file.name}" uploaded successfully!`);
+
+// TODO: Refresh document list or add the new document to state
+// You might want to call a function to reload documents from the server
+// e.g., await fetchDocuments();
+
+} catch (error) {
+console.error('Upload error:', error);
+alert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+} finally {
+setIsUploading(false);
 // Reset the input so the same file can be selected again if needed
 event.target.value = '';
+}
+}
 };
 
 return (
@@ -47,13 +94,21 @@ return (
 </div>
 <div className="flex gap-2">
 <Button variant="outline" className="gap-2"><Download size={16}/> Export List</Button>
-<Button className="gap-2" onClick={handleUploadClick}><FileText size={16}/> Upload Document</Button>
+<Button 
+className="gap-2" 
+onClick={handleUploadClick}
+disabled={isUploading}
+>
+<FileText size={16}/> 
+{isUploading ? 'Uploading...' : 'Upload Document'}
+</Button>
 <input
 ref={fileInputRef}
 type="file"
 onChange={handleFileChange}
 style={{ display: 'none' }}
 accept=".pdf,.doc,.docx,.txt,.xls,.xlsx"
+disabled={isUploading}
 />
 </div>
 </div>
