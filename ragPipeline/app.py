@@ -13,7 +13,7 @@ from version_compare import compare_documents, compare_texts
 from utils import extract_text_from_file, chunk_text
 from langchain_groq import ChatGroq
 import re
-
+from datetime import datetime
 
 retriever = None
 
@@ -28,7 +28,7 @@ INDEX_HTML = """
 <!doctype html>
 <title>RegTech RAG - Minimal Upload</title>
 <h1>Upload a PDF or TXT</h1>
-<form method=post enctype=multipart/form-data action="/upload">
+<form method=post enctype=multipart/form-data action="http://localhost:7860/api/documents/upload">
   <input type=file name=file>
   <input type=submit value=Upload>
 </form>
@@ -271,6 +271,36 @@ def upload():
 @app.route('/docs', methods=['GET'])
 def list_docs():
     return jsonify(store.list_documents())
+
+
+@app.route('/api/admin/ingestion/recent', methods=['GET'])
+def get_recent_ingestions():
+    """
+    Returns recent uploaded/indexed documents for admin dashboard
+    """
+
+    docs = store.list_documents()
+
+    results = []
+
+    for doc in docs:
+        results.append({
+            "id": doc.get("id"),
+            "title": doc.get("title") or doc.get("filename"),
+            "regulator": doc.get("regulator", "Unknown"),
+            "jurisdiction": doc.get("jurisdiction", "Unknown"),
+            "date": doc.get("uploaded_at") or datetime.utcnow().isoformat(),
+            "status": doc.get("status", "active"),
+            "version": doc.get("version", "v1.0"),
+            "sector": doc.get("sector", "General")
+        })
+
+    # Sort by most recent first
+    results.sort(key=lambda x: x["date"], reverse=True)
+
+    return jsonify({
+        "data": results
+    })
 
 
 @app.route('/docs/<doc_id>/chunks', methods=['GET'])
